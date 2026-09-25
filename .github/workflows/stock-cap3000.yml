@@ -30,7 +30,6 @@ jobs:
       - name: Vérifier le stock
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          NTFY_EMAIL: ${{ secrets.NTFY_EMAIL }}
         run: python stock_iphone_cap3000.py --once
 
       - uses: actions/cache/save@v4

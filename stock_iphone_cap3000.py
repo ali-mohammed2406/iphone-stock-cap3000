@@ -28,7 +28,6 @@ STORE = "R395"            # Apple Cap 3000
 LOCATION = "06700"        # Saint-Laurent-du-Var
 INTERVAL_SEC = 120        # mode local uniquement
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")  # ex: "ali-iphone-cap3000-x7k2"
-NTFY_EMAIL = os.environ.get("NTFY_EMAIL", "")  # optionnel : copie de la notif par email
 STATE_FILE = "state.json" # mémorise ce qui a déjà été notifié entre deux runs
 # -------------------------------------------------------------------------
 
@@ -60,16 +59,20 @@ def notify(msg):
     if not NTFY_TOPIC:
         print("  (NTFY_TOPIC vide : pas de push envoyé)")
         return
-    headers = {
-        "Title": "iPhone dispo a Cap 3000",
-        "Priority": "urgent",
-        "Click": "https://www.apple.com/fr/shop/buy-iphone/iphone-18-pro",
-    }
-    if NTFY_EMAIL:
-        headers["Email"] = NTFY_EMAIL
-    req = urllib.request.Request(f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode(), headers=headers)
-    urllib.request.urlopen(req, timeout=10)
-    print(f"  📲 Notif envoyée (push{' + email' if NTFY_EMAIL else ''})")
+    try:
+        req = urllib.request.Request(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=msg.encode(),
+            headers={
+                "Title": "iPhone dispo a Cap 3000",
+                "Priority": "urgent",
+                "Click": "https://www.apple.com/fr/shop/buy-iphone/iphone-18-pro",
+            },
+        )
+        urllib.request.urlopen(req, timeout=10)
+        print("  📲 Notif push envoyée")
+    except Exception as e:
+        print(f"  ⚠️ Push ntfy échoué : {e}")
 
 
 def load_state():
@@ -86,6 +89,7 @@ def save_state(notified):
 
 
 def run_once(notified):
+    new = []
     now = datetime.now().strftime("%H:%M:%S")
     for part, (ok, quote) in check().items():
         name = PARTS.get(part, part)
@@ -93,15 +97,24 @@ def run_once(notified):
         if ok and part not in notified:
             notify(f"{name} : {quote}. Réserve vite dans l'app Apple Store !")
             notified.add(part)
+            new.append(f"{name} : {quote}")
         elif not ok:
             notified.discard(part)  # re-notifier si ça revient
+    return new
 
 
 def main():
     notified = load_state()
     if "--once" in sys.argv:
-        run_once(notified)          # une erreur fait échouer le run (visible sur GitHub)
-        save_state(notified)
+        try:
+            new = run_once(notified)
+        finally:
+            save_state(notified)
+        if new:
+            # Fait volontairement échouer le run : GitHub t'envoie alors un email
+            # ("Run failed") = ta notif par email.
+            print(f"::error title=iPhone DISPO a Cap 3000::{' / '.join(new)}")
+            sys.exit(1)
         return
     while True:
         try:
