@@ -1,9 +1,14 @@
-name: Stock iPhone Cap 3000
+name: iPhone 256 Go Bordeaux - Cap 3000
 
 on:
   schedule:
     - cron: "*/5 * * * *"   # toutes les 5 min (GitHub peut retarder de quelques minutes)
-  workflow_dispatch:         # bouton "Run workflow" pour tester à la main
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Envoyer un email de test"
+        type: boolean
+        default: false
 
 concurrency:
   group: stock-cap3000
@@ -11,12 +16,16 @@ concurrency:
 
 jobs:
   check:
+    name: "Vérification du stock (si ce job échoue = bug technique, pas un iPhone dispo)"
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    outputs:
+      alert: ${{ steps.stock.outputs.alert }}
+      quote: ${{ steps.stock.outputs.quote }}
+      checked_at: ${{ steps.stock.outputs.checked_at }}
     steps:
       - uses: actions/checkout@v4
 
-      # Récupère la mémoire des notifs déjà envoyées (évite un push toutes les 5 min)
       - uses: actions/cache/restore@v4
         with:
           path: state.json
@@ -27,9 +36,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Vérifier le stock
-        env:
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      - id: stock
+        name: Interroger l'Apple Store
         run: python stock_iphone_cap3000.py --once
 
       - uses: actions/cache/save@v4
@@ -37,3 +45,25 @@ jobs:
         with:
           path: state.json
           key: notif-state-${{ github.run_id }}
+
+  alerte:
+    needs: check
+    if: needs.check.outputs.alert == 'true' || inputs.test_alert
+    name: ${{ inputs.test_alert && '🧪 TEST - Ceci est un email de test, l''alerte fonctionne' || '📱 iPhone 18 Pro Max 256 Go Bordeaux DISPO à Cap 3000 - Réserve vite dans l''app Apple Store' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alerte
+        run: |
+          {
+            echo "## 📱 iPhone 18 Pro Max 256 Go Bordeaux disponible à Cap 3000"
+            echo ""
+            echo "**Statut Apple :** ${{ needs.check.outputs.quote }} (vérifié le ${{ needs.check.outputs.checked_at }})"
+            echo ""
+            echo "👉 [Réserver en retrait à Cap 3000](https://www.apple.com/fr/shop/buy-iphone/iphone-18-pro/%C3%A9cran-de-6,9-pouces-256go-bordeaux)"
+            echo ""
+            echo "Les créneaux partent en quelques minutes : réserve tout de suite."
+            echo ""
+            echo "_Ce run est marqué « failed » exprès pour que GitHub t'envoie un email._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=iPhone DISPO::iPhone 18 Pro Max 256 Go Bordeaux dispo à Cap 3000 (${{ needs.check.outputs.quote }}) - réserve vite !"
+          exit 1
