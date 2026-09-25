@@ -1,4 +1,4 @@
-name: iPhone 256 Go Bordeaux - Cap 3000
+name: iPhone
 
 on:
   schedule:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    name: "Vérification du stock (si ce job échoue = bug technique, pas un iPhone dispo)"
+    name: "vérif"
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
@@ -49,7 +49,7 @@ jobs:
   alerte:
     needs: check
     if: needs.check.outputs.alert == 'true' || inputs.test_alert
-    name: ${{ inputs.test_alert && '🧪 TEST - Ceci est un email de test, l''alerte fonctionne' || '📱 iPhone 18 Pro Max 256 Go Bordeaux DISPO à Cap 3000 - Réserve vite dans l''app Apple Store' }}
+    name: ${{ inputs.test_alert && '🧪 TEST - 🚨 VITE, le 256 est disponible !' || '🚨 VITE, le 256 est disponible !' }}
     runs-on: ubuntu-latest
     steps:
       - name: Alerte
@@ -65,5 +65,5 @@ jobs:
             echo ""
             echo "_Ce run est marqué « failed » exprès pour que GitHub t'envoie un email._"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::error title=iPhone DISPO::iPhone 18 Pro Max 256 Go Bordeaux dispo à Cap 3000 (${{ needs.check.outputs.quote }}) - réserve vite !"
+          echo "::error title=🚨 VITE::Le 256 est disponible à Cap 3000 ! Réserve dans l'app Apple Store."
           exit 1
