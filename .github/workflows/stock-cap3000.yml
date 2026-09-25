@@ -1,0 +1,40 @@
+name: Stock iPhone Cap 3000
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # toutes les 5 min (GitHub peut retarder de quelques minutes)
+  workflow_dispatch:         # bouton "Run workflow" pour tester à la main
+
+concurrency:
+  group: stock-cap3000
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      # Récupère la mémoire des notifs déjà envoyées (évite un push toutes les 5 min)
+      - uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: notif-state-${{ github.run_id }}
+          restore-keys: notif-state-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Vérifier le stock
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_EMAIL: ${{ secrets.NTFY_EMAIL }}
+        run: python stock_iphone_cap3000.py --once
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: state.json
+          key: notif-state-${{ github.run_id }}
