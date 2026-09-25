@@ -2,13 +2,16 @@ name: iPhone
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # toutes les 5 min (GitHub peut retarder de quelques minutes)
+    - cron: "*/5 * * * *"   # relance une boucle dès que la précédente se termine
   workflow_dispatch:
     inputs:
       test_alert:
         description: "Envoyer un email de test"
         type: boolean
         default: false
+      duration:
+        description: "Durée de la boucle (minutes)"
+        default: "55"
 
 concurrency:
   group: stock-cap3000
@@ -18,7 +21,7 @@ jobs:
   check:
     name: "vérif"
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 65
     outputs:
       alert: ${{ steps.stock.outputs.alert }}
       quote: ${{ steps.stock.outputs.quote }}
@@ -38,7 +41,7 @@ jobs:
 
       - id: stock
         name: Interroger l'Apple Store
-        run: python stock_iphone_cap3000.py --once
+        run: python stock_iphone_cap3000.py --loop ${{ inputs.duration || 55 }} --interval 60
 
       - uses: actions/cache/save@v4
         if: always()

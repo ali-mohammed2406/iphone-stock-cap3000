@@ -7,11 +7,14 @@ Mode GitHub Actions (--once) : écrit available=true/false dans GITHUB_OUTPUT.
 Le workflow déclenche alors un job "alerte" qui échoue volontairement :
 GitHub t'envoie un email, rien à installer.
 
-Usage local : python3 stock_iphone_cap3000.py --once
+Usage :
+    python3 stock_iphone_cap3000.py --once
+    python3 stock_iphone_cap3000.py --loop 55 --interval 60   # boucle 55 min, check/60 s
 """
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -51,22 +54,54 @@ def load_state():
         return False
 
 
-def main():
-    now = datetime.now(ZoneInfo("Europe/Paris")).strftime("%d/%m %H:%M")
-    already = load_state()
-    ok, quote = check()
-    print(f"[{now}] {'✅' if ok else '❌'} {NAME} : {quote}")
-
-    alert = ok and not already
-    with open(STATE_FILE, "w") as f:
-        json.dump({"notified": ok}, f)   # si rupture, on ré-alertera au retour du stock
-
+def write_outputs(alert, quote, now):
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a") as f:
             f.write(f"alert={'true' if alert else 'false'}\n")
             f.write(f"quote={quote}\n")
             f.write(f"checked_at={now}\n")
+
+
+def save_state(notified):
+    with open(STATE_FILE, "w") as f:
+        json.dump({"notified": notified}, f)
+
+
+def arg(name, default):
+    return int(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
+
+
+def main():
+    loop_min = arg("--loop", 0)            # 0 = un seul check
+    interval = arg("--interval", 60)
+    deadline = time.time() + loop_min * 60
+    notified = load_state()
+    errors, quote, now = 0, "", ""
+
+    while True:
+        now = datetime.now(ZoneInfo("Europe/Paris")).strftime("%d/%m %H:%M:%S")
+        try:
+            ok, quote = check()
+            errors = 0
+            print(f"[{now}] {'✅' if ok else '❌'} {NAME} : {quote}", flush=True)
+            if ok and not notified:
+                save_state(True)
+                write_outputs(True, quote, now)
+                return                      # on sort tout de suite -> job alerte -> email
+            notified = ok                   # si rupture, on ré-alertera au retour du stock
+        except Exception as e:
+            errors += 1
+            print(f"[{now}] ⚠️ Erreur ({errors}/5) : {e}", flush=True)
+            if errors >= 5:                 # vraie panne -> le job "vérif" échoue -> email
+                save_state(notified)
+                raise
+        if time.time() + interval > deadline:
+            break
+        time.sleep(interval)
+
+    save_state(notified)
+    write_outputs(False, quote, now)
 
 
 if __name__ == "__main__":
