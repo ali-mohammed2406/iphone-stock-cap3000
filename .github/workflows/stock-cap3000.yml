@@ -2,7 +2,7 @@ name: iPhone
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # relance une boucle dès que la précédente se termine
+    - cron: "*/5 * * * *"   # filet de sécurité si la chaîne s'interrompt
   workflow_dispatch:
     inputs:
       test_alert:
@@ -12,6 +12,10 @@ on:
       duration:
         description: "Durée de la boucle (minutes)"
         default: "55"
+
+permissions:
+  contents: read
+  actions: write   # pour relancer la boucle suivante
 
 concurrency:
   group: stock-cap3000
@@ -48,6 +52,14 @@ jobs:
         with:
           path: state.json
           key: notif-state-${{ github.run_id }}
+
+      # Enchaîne la boucle suivante sans dépendre du cron GitHub (souvent en retard).
+      # Démarre dès que ce run (alerte comprise) est terminé, grâce au groupe de concurrence.
+      - name: Relancer la surveillance
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run stock-cap3000.yml --ref main -R ${{ github.repository }}
 
   alerte:
     needs: check
