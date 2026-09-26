@@ -27,6 +27,7 @@ STORES = {                             # numéro Apple -> (nom affiché, code po
     "R277": ("Opéra", "75009"),
 }
 STATE_FILE = "state.json"              # magasins déjà notifiés (évite le spam)
+OUTAGE_MIN = 45                        # email de panne si Apple ne répond plus depuis 45 min
 
 URL = "https://www.apple.com/fr/shop/retail/pickup-message"
 HEADERS = {
@@ -54,18 +55,20 @@ def load_state():
             d = json.load(f)
         n = d.get("notified", [])
         if n is True:                  # ancien format (Cap 3000 seul)
-            return {"R395"}
-        return set(n) if isinstance(n, list) else set()
-    except (FileNotFoundError, ValueError, AttributeError):
-        return set()
+            n = ["R395"]
+        notified = set(n) if isinstance(n, list) else set()
+        return notified, float(d.get("fail_since") or 0), bool(d.get("outage_notified"))
+    except (FileNotFoundError, ValueError, AttributeError, TypeError):
+        return set(), 0.0, False
 
 
-def save_state(notified):
+def save_state(notified, fail_since, outage_notified):
     with open(STATE_FILE, "w") as f:
-        json.dump({"notified": sorted(notified)}, f)
+        json.dump({"notified": sorted(notified), "fail_since": fail_since,
+                   "outage_notified": outage_notified}, f)
 
 
-def write_outputs(new, now):
+def write_outputs(new, now, outage=False):
     out = os.environ.get("GITHUB_OUTPUT")
     if not out:
         return
@@ -73,6 +76,7 @@ def write_outputs(new, now):
     quote = " / ".join(f"{STORES[s][0]} : {q}" for s, q in new)
     with open(out, "a") as f:
         f.write(f"alert={'true' if new else 'false'}\n")
+        f.write(f"outage={'true' if outage else 'false'}\n")
         f.write(f"stores={stores}\n")
         f.write(f"quote={quote}\n")
         f.write(f"checked_at={now}\n")
@@ -84,40 +88,46 @@ def arg(name, default):
 
 def main():
     loop_min = arg("--loop", 0)            # 0 = un seul passage
-    interval = arg("--interval", 60)
+    interval = arg("--interval", 60)       # 1 requête Apple par intervalle, magasins en alternance
     deadline = time.time() + loop_min * 60
-    notified = load_state()
-    errors = {s: 0 for s in STORES}
-    now = ""
+    notified, fail_since, outage_notified = load_state()
+    store_ids = list(STORES)
+    i, backoff, now = 0, 0, ""
 
     while True:
         now = datetime.now(ZoneInfo("Europe/Paris")).strftime("%d/%m %H:%M:%S")
-        new = []
-        for sid, (label, loc) in STORES.items():
-            try:
-                ok, quote = check_store(sid, loc)
-                errors[sid] = 0
-                print(f"[{now}] {'✅' if ok else '❌'} {label} - {NAME} : {quote}", flush=True)
-                if ok and sid not in notified:
-                    new.append((sid, quote))
-                    notified.add(sid)
-                elif not ok:
-                    notified.discard(sid)  # ré-alerter si le stock revient
-            except Exception as e:
-                errors[sid] += 1
-                print(f"[{now}] ⚠️ Erreur {label} ({errors[sid]}/5) : {e}", flush=True)
-                if errors[sid] >= 5:       # vraie panne -> job "vérif" en échec -> email
-                    save_state(notified)
-                    raise
-        if new:
-            save_state(notified)
-            write_outputs(new, now)
-            return                          # sortie immédiate -> job alerte -> email
-        if time.time() + interval > deadline:
+        sid = store_ids[i % len(store_ids)]
+        label, loc = STORES[sid]
+        i += 1
+        try:
+            ok, quote = check_store(sid, loc)
+            backoff, fail_since, outage_notified = 0, 0.0, False
+            print(f"[{now}] {'✅' if ok else '❌'} {label} - {NAME} : {quote}", flush=True)
+            if ok and sid not in notified:
+                notified.add(sid)
+                save_state(notified, fail_since, outage_notified)
+                write_outputs([(sid, quote)], now)
+                return                      # sortie immédiate -> job alerte -> email
+            if not ok:
+                notified.discard(sid)      # ré-alerter si le stock revient
+        except Exception as e:
+            # Apple limite parfois les requêtes (HTTP 541) : on ralentit au lieu d'insister.
+            fail_since = fail_since or time.time()
+            backoff = min(max(backoff * 2, 120), 600)
+            down_min = int((time.time() - fail_since) / 60)
+            print(f"[{now}] ⚠️ {label} : {e} -> pause {backoff // 60} min "
+                  f"(erreurs depuis {down_min} min)", flush=True)
+            if down_min >= OUTAGE_MIN and not outage_notified:
+                outage_notified = True
+                save_state(notified, fail_since, outage_notified)
+                write_outputs([], now, outage=True)
+                return                      # un seul email de panne, puis on continue au run suivant
+        wait = interval + backoff
+        if time.time() + wait > deadline:
             break
-        time.sleep(interval)
+        time.sleep(wait)
 
-    save_state(notified)
+    save_state(notified, fail_since, outage_notified)
     write_outputs([], now)
 
 

@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 65
     outputs:
       alert: ${{ steps.stock.outputs.alert }}
+      outage: ${{ steps.stock.outputs.outage }}
       stores: ${{ steps.stock.outputs.stores }}
       quote: ${{ steps.stock.outputs.quote }}
       checked_at: ${{ steps.stock.outputs.checked_at }}
@@ -82,4 +83,14 @@ jobs:
             echo "_Ce run est marqué « failed » exprès pour que GitHub t'envoie un email._"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::error title=🚨 VITE::Le 256 est disponible à ${{ needs.check.outputs.stores }} ! Réserve dans l'app Apple Store."
+          exit 1
+
+  panne:
+    needs: check
+    if: needs.check.outputs.outage == 'true'
+    name: "⚠️ Panne : Apple ne répond plus depuis 45 min (la surveillance continue)"
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error title=Panne::Apple bloque les vérifications. Le script ralentit et réessaie tout seul ; rien à faire."
           exit 1
