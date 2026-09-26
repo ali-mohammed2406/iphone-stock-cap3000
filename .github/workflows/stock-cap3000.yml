@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 65
     outputs:
       alert: ${{ steps.stock.outputs.alert }}
+      stores: ${{ steps.stock.outputs.stores }}
       quote: ${{ steps.stock.outputs.quote }}
       checked_at: ${{ steps.stock.outputs.checked_at }}
     steps:
@@ -64,21 +65,21 @@ jobs:
   alerte:
     needs: check
     if: needs.check.outputs.alert == 'true' || inputs.test_alert
-    name: ${{ inputs.test_alert && '🧪 TEST - 🚨 VITE, le 256 est disponible !' || '🚨 VITE, le 256 est disponible !' }}
+    name: ${{ inputs.test_alert && '🧪 TEST - 🚨 VITE, le 256 est disponible !' || format('🚨 VITE, le 256 est disponible à {0} !', needs.check.outputs.stores) }}
     runs-on: ubuntu-latest
     steps:
       - name: Alerte
         run: |
           {
-            echo "## 📱 iPhone 18 Pro Max 256 Go Bordeaux disponible à Cap 3000"
+            echo "## 📱 iPhone 18 Pro Max 256 Go Bordeaux disponible à ${{ needs.check.outputs.stores }}"
             echo ""
             echo "**Statut Apple :** ${{ needs.check.outputs.quote }} (vérifié le ${{ needs.check.outputs.checked_at }})"
             echo ""
-            echo "👉 [Réserver en retrait à Cap 3000](https://www.apple.com/fr/shop/buy-iphone/iphone-18-pro/%C3%A9cran-de-6,9-pouces-256go-bordeaux)"
+            echo "👉 [Réserver en retrait](https://www.apple.com/fr/shop/buy-iphone/iphone-18-pro/%C3%A9cran-de-6,9-pouces-256go-bordeaux)"
             echo ""
             echo "Les créneaux partent en quelques minutes : réserve tout de suite."
             echo ""
             echo "_Ce run est marqué « failed » exprès pour que GitHub t'envoie un email._"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::error title=🚨 VITE::Le 256 est disponible à Cap 3000 ! Réserve dans l'app Apple Store."
+          echo "::error title=🚨 VITE::Le 256 est disponible à ${{ needs.check.outputs.stores }} ! Réserve dans l'app Apple Store."
           exit 1
