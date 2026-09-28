@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Surveille la dispo en retrait de l'iPhone 18 Pro Max 256 Go Bordeaux
-dans plusieurs Apple Store (Cap 3000, Opéra).
+à Cap 3000 et dans les Apple Store de Paris / Île-de-France.
 
 Mode GitHub Actions : écrit alert/stores/quote dans GITHUB_OUTPUT.
 Le workflow déclenche alors un job "alerte" qui échoue volontairement :
@@ -22,10 +22,17 @@ from zoneinfo import ZoneInfo
 
 PART = "MJXQ4F/A"                      # iPhone 18 Pro Max 256 Go Bordeaux
 NAME = "iPhone 18 Pro Max 256 Go Bordeaux"
-STORES = {                             # numéro Apple -> (nom affiché, code postal proche)
-    "R395": ("Cap 3000", "06700"),
-    "R277": ("Opéra", "75009"),
+# Une requête Apple par zone renvoie tous les magasins proches : on en surveille plusieurs
+# sans ajouter de requêtes. Zones interrogées en alternance (1 requête / intervalle).
+ZONES = {
+    "06700": {"R395": "Cap 3000"},
+    "75009": {                         # Paris et Île-de-France (pour ta sœur)
+        "R277": "Opéra", "R675": "Champs-Élysées", "R566": "Marché Saint-Germain",
+        "R178": "Les Quatre Temps", "R536": "Rosny 2", "R315": "Vélizy 2",
+        "R374": "Parly 2", "R425": "Val d'Europe", "R438": "Carré Sénart",
+    },
 }
+STORES = {sid: name for z in ZONES.values() for sid, name in z.items()}
 STATE_FILE = "state.json"              # magasins déjà notifiés (évite le spam)
 OUTAGE_MIN = 45                        # email de panne si Apple ne répond plus depuis 45 min
 
@@ -37,16 +44,21 @@ HEADERS = {
 }
 
 
-def check_store(store_id, location):
+def check_zone(location):
+    """Retourne {store_id: (dispo, message)} pour les magasins surveillés de la zone."""
     params = {"parts.0": PART, "location": location}
     req = urllib.request.Request(f"{URL}?{urllib.parse.urlencode(params)}", headers=HEADERS)
     with urllib.request.urlopen(req, timeout=20) as r:
         data = json.load(r)
-    store = next((s for s in data["body"]["stores"] if s["storeNumber"] == store_id), None)
-    if store is None:
-        raise RuntimeError(f"Magasin {store_id} absent de la réponse Apple")
-    info = store["partsAvailability"][PART]
-    return info.get("pickupDisplay") == "available", info.get("pickupSearchQuote", "")
+    res = {}
+    for s in data["body"]["stores"]:
+        if s["storeNumber"] in ZONES[location]:
+            info = s["partsAvailability"][PART]
+            res[s["storeNumber"]] = (info.get("pickupDisplay") == "available",
+                                     info.get("pickupSearchQuote", ""))
+    if not res:
+        raise RuntimeError(f"Aucun magasin surveillé dans la réponse ({location})")
+    return res
 
 
 def load_state():
@@ -72,8 +84,8 @@ def write_outputs(new, now, outage=False):
     out = os.environ.get("GITHUB_OUTPUT")
     if not out:
         return
-    stores = " et ".join(STORES[s][0] for s, _ in new)
-    quote = " / ".join(f"{STORES[s][0]} : {q}" for s, q in new)
+    stores = ", ".join(STORES[s] for s, _ in new)
+    quote = " / ".join(f"{STORES[s]} : {q}" for s, q in new)
     with open(out, "a") as f:
         f.write(f"alert={'true' if new else 'false'}\n")
         f.write(f"outage={'true' if outage else 'false'}\n")
@@ -91,25 +103,31 @@ def main():
     interval = arg("--interval", 60)       # 1 requête Apple par intervalle, magasins en alternance
     deadline = time.time() + loop_min * 60
     notified, fail_since, outage_notified = load_state()
-    store_ids = list(STORES)
+    zones = list(ZONES)
     i, backoff, now = 0, 0, ""
 
     while True:
         now = datetime.now(ZoneInfo("Europe/Paris")).strftime("%d/%m %H:%M:%S")
-        sid = store_ids[i % len(store_ids)]
-        label, loc = STORES[sid]
+        loc = zones[i % len(zones)]
+        label = "Paris" if loc == "75009" else "Cap 3000"
         i += 1
         try:
-            ok, quote = check_store(sid, loc)
+            res = check_zone(loc)
             backoff, fail_since, outage_notified = 0, 0.0, False
-            print(f"[{now}] {'✅' if ok else '❌'} {label} - {NAME} : {quote}", flush=True)
-            if ok and sid not in notified:
-                notified.add(sid)
+            dispo = [STORES[sid] for sid, (ok, _) in res.items() if ok]
+            print(f"[{now}] {'✅' if dispo else '❌'} {label} ({len(res)} magasins) - {NAME} : "
+                  f"{', '.join(dispo) if dispo else 'aucun dispo'}", flush=True)
+            new = []
+            for sid, (ok, quote) in res.items():
+                if ok and sid not in notified:
+                    notified.add(sid)
+                    new.append((sid, quote))
+                elif not ok:
+                    notified.discard(sid)  # ré-alerter si le stock revient
+            if new:
                 save_state(notified, fail_since, outage_notified)
-                write_outputs([(sid, quote)], now)
+                write_outputs(new, now)
                 return                      # sortie immédiate -> job alerte -> email
-            if not ok:
-                notified.discard(sid)      # ré-alerter si le stock revient
         except Exception as e:
             # Apple limite parfois les requêtes (HTTP 541) : on ralentit au lieu d'insister.
             fail_since = fail_since or time.time()
@@ -121,7 +139,7 @@ def main():
                 outage_notified = True
                 save_state(notified, fail_since, outage_notified)
                 write_outputs([], now, outage=True)
-                return                      # un seul email de panne, puis on continue au run suivant
+                return
         wait = interval + backoff
         if time.time() + wait > deadline:
             break
